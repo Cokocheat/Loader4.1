@@ -1,7 +1,7 @@
 {
-  "bypassVersion": "1",
+  "bypassVersion": "2",
   "appVersionName": "4.5.1",
   "mainURL": "https://github.com/Cokocheat/Loader4.1/releases/download/Scp/sock.zip",
-  "updateURL": "https://github.com/Cokocheat/Loader4.1/releases/download/Scp/app-release.apk",
+  "updateURL": "https://github.com/Cokocheat/Loader4.1/releases/download/Scp/pubgm.loader-release.apk",
   "changelog": "Perbaikan bug dan peningkatan performa."
 }
