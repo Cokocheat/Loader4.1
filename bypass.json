@@ -1,4 +1,7 @@
 {
-  "bypassVersion": 9,
-  "mainURL": "https://github.com/Cokocheat/Loader4.1/releases/download/Scp/sock.zip"
+  "bypassVersion": "2",
+  "versionCode": 1.1201.23.10,
+  "mainURL": "https://github.com/Cokocheat/Loader4.1/releases/download/Scp/sock.zip",
+  "updateURL": "https://github.com/Cokocheat/Loader4.1/releases/download/Scp/app-release.apk",
+  "changelog": "Perbaikan bug dan peningkatan performa."
 }
