@@ -1,6 +1,5 @@
 // ============================================================
-// COMBATLOADER / BLACKBERRY AUTH WORKER
-// Cloudflare Workers + D1 Database (Mobile Optimized)
+// COMBATLOADER / BLACKBERRY AUTH WORKER (Timeout & Error Fix)
 // ============================================================
 
 export default {
@@ -42,7 +41,7 @@ export default {
 };
 
 // ============================================================
-// LOGIN API (Lua)
+// LOGIN API
 // ============================================================
 async function handleLogin(request, env, ip) {
   if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
@@ -102,7 +101,7 @@ function textResponse(text) {
 // ============================================================
 async function handleAdmin(request, env, path, cors) {
   if (!env.ADMIN_TOKEN) {
-    return jsonResponse({ error: 'ADMIN_TOKEN belum di-set di Cloudflare!' }, 500, cors);
+    return jsonResponse({ error: 'ADMIN_TOKEN tidak ditemukan! Set di Cloudflare Settings.' }, 500, cors);
   }
 
   const token = request.headers.get('X-Admin-Token');
@@ -151,7 +150,7 @@ function jsonResponse(obj, status, cors) {
 }
 
 // ============================================================
-// UI PANEL (Bebas Bug Browser HP)
+// UI PANEL (Ditambahkan Timeout 5 Detik)
 // ============================================================
 function getPanelHTML() {
   return `<!DOCTYPE html>
@@ -203,6 +202,16 @@ if(token) {
   loadKeys();
 }
 
+// Fungsi Fetch dengan Timeout 5 Detik (Anti-Hang)
+function fetchWithTimeout(url, options, timeout = 5000) {
+  return Promise.race([
+    fetch(url, options),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Waktu habis (Server tidak merespons)')), timeout)
+    )
+  ]);
+}
+
 function doLogin() {
   var passVal = document.getElementById('pass').value;
   var btn = document.getElementById('loginBtn');
@@ -210,14 +219,14 @@ function doLogin() {
   
   errDiv.innerText = '';
   
-  fetch('/admin/ping', {
+  fetchWithTimeout('/admin/ping', {
     method: 'GET',
     headers: { 'X-Admin-Token': passVal }
-  })
+  }, 5000)
   .then(function(res) { return res.text(); })
   .then(function(text) {
     var d;
-    try { d = JSON.parse(text); } catch(e) { d = { error: 'Respons tidak valid: ' + text }; }
+    try { d = JSON.parse(text); } catch(e) { d = { error: 'Respons tidak valid (Mungkin Worker Error): ' + text }; }
     
     if(d && d.ok) { 
       try { localStorage.setItem('token', passVal); } catch(e) {}
@@ -231,7 +240,7 @@ function doLogin() {
   .catch(function(err) {
     btn.innerText = 'Login';
     btn.disabled = false;
-    errDiv.innerText = 'Koneksi error: ' + err.message;
+    errDiv.innerText = 'Koneksi Gagal: ' + err.message;
   });
 }
 
@@ -241,7 +250,7 @@ function logout() {
 }
 
 function loadKeys() {
-  fetch('/admin/keys', { headers: { 'X-Admin-Token': token } })
+  fetchWithTimeout('/admin/keys', { headers: { 'X-Admin-Token': token } })
   .then(function(res) { return res.json(); })
   .then(function(d) {
     if(d.error) { alert('Gagal load: ' + d.error); return; }
@@ -270,7 +279,7 @@ function createKey() {
   var key = document.getElementById('newKey').value;
   var days = document.getElementById('newDays').value;
   
-  fetch('/admin/keys', { 
+  fetchWithTimeout('/admin/keys', { 
     method: 'POST', 
     headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
     body: JSON.stringify({ key: key, days: days }) 
@@ -284,7 +293,7 @@ function createKey() {
 
 function del(key) {
   if(confirm('Hapus key ' + key + '?')) { 
-    fetch('/admin/keys/delete', { 
+    fetchWithTimeout('/admin/keys/delete', { 
       method: 'POST', 
       headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
       body: JSON.stringify({ key: key }) 
