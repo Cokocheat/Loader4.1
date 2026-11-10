@@ -5,4 +5,4 @@ compatibility_date = "2024-11-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "combatloader-db" # GANTI dengan nama database D1 kamu
-database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" # GANTI dengan ID D1 kamu (bisa dilihat di dashboard D1)
+database_id = "5b8ca26a-5215-4df2-b9c0-3e149c69ef27" # GANTI dengan ID D1 kamu (bisa dilihat di dashboard D1)
