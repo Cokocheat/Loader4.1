@@ -1,5 +1,6 @@
 // ============================================================
-// COMBATLOADER / BLACKBERRY AUTH WORKER (Timeout & Error Fix)
+// COMBATLOADER / BLACKBERRY AUTH WORKER
+// Versi: Fix Mobile Hang + Cache Control
 // ============================================================
 
 export default {
@@ -19,9 +20,18 @@ export default {
     }
 
     try {
+      // --- FITUR TES KESEHATAN SERVER (Buka di browser) ---
+      if (path === '/health') {
+        return new Response('SERVER HIDUP DAN BERJALAN NORMAL!', { status: 200, headers: { 'Content-Type': 'text/plain' } });
+      }
+
       if (path === '/' || path === '/panel') {
         return new Response(getPanelHTML(), {
-          headers: { 'Content-Type': 'text/html; charset=utf-8' }
+          // Cache-Control: no-store mencegah HP menyimpan versi lama halaman ini
+          headers: { 
+            'Content-Type': 'text/html; charset=utf-8',
+            'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
+          }
         });
       }
 
@@ -41,7 +51,7 @@ export default {
 };
 
 // ============================================================
-// LOGIN API
+// LOGIN API (Lua)
 // ============================================================
 async function handleLogin(request, env, ip) {
   if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
@@ -101,7 +111,7 @@ function textResponse(text) {
 // ============================================================
 async function handleAdmin(request, env, path, cors) {
   if (!env.ADMIN_TOKEN) {
-    return jsonResponse({ error: 'ADMIN_TOKEN tidak ditemukan! Set di Cloudflare Settings.' }, 500, cors);
+    return jsonResponse({ error: 'ADMIN_TOKEN tidak ditemukan!' }, 500, cors);
   }
 
   const token = request.headers.get('X-Admin-Token');
@@ -141,7 +151,7 @@ async function handleAdmin(request, env, path, cors) {
 
     return jsonResponse({ error: 'Endpoint tidak ditemukan' }, 404, cors);
   } catch (e) {
-    return jsonResponse({ error: 'DB Error: Pastikan tabel sudah dibuat. ' + e.message }, 500, cors);
+    return jsonResponse({ error: 'DB Error: ' + e.message }, 500, cors);
   }
 }
 
@@ -150,7 +160,7 @@ function jsonResponse(obj, status, cors) {
 }
 
 // ============================================================
-// UI PANEL (Ditambahkan Timeout 5 Detik)
+// UI PANEL (XMLHttpRequest)
 // ============================================================
 function getPanelHTML() {
   return `<!DOCTYPE html>
@@ -170,7 +180,7 @@ function getPanelHTML() {
   .badge { padding: 3px 8px; border-radius: 4px; font-size: 12px; }
   .active { background: #065f46; color: #34d399; }
   .inactive { background: #7f1d1d; color: #fca5a5; }
-  #errorMsg { color: #ef4444; font-size: 14px; margin-top: 10px; font-weight: bold; text-align: center; min-height: 20px; }
+  #errorMsg { color: #ef4444; font-size: 14px; margin-top: 10px; font-weight: bold; text-align: center; }
 </style>
 </head>
 <body>
@@ -194,7 +204,7 @@ function getPanelHTML() {
 
 <script>
 var token = '';
-try { token = localStorage.getItem('token') || ''; } catch(e) { console.log('LocalStorage blocked'); }
+try { token = localStorage.getItem('token') || ''; } catch(e) {}
 
 if(token) {
   document.getElementById('loginBox').style.display = 'none';
@@ -202,45 +212,46 @@ if(token) {
   loadKeys();
 }
 
-// Fungsi Fetch dengan Timeout 5 Detik (Anti-Hang)
-function fetchWithTimeout(url, options, timeout = 5000) {
-  return Promise.race([
-    fetch(url, options),
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Waktu habis (Server tidak merespons)')), timeout)
-    )
-  ]);
+function apiCall(method, url, passToken, bodyObj, callback) {
+  var xhr = new XMLHttpRequest();
+  xhr.open(method, url, true);
+  xhr.timeout = 5000; 
+  xhr.setRequestHeader('X-Admin-Token', passToken);
+  if (bodyObj) xhr.setRequestHeader('Content-Type', 'application/json');
+  
+  xhr.onload = function() {
+    if (xhr.status >= 200 && xhr.status < 300) {
+      try { callback(null, JSON.parse(xhr.responseText)); } 
+      catch(e) { callback('Format Error: ' + xhr.responseText); }
+    } else {
+      try { callback(JSON.parse(xhr.responseText).error || 'Server Error ' + xhr.status); } 
+      catch(e) { callback('Server Error ' + xhr.status); }
+    }
+  };
+  xhr.onerror = function() { callback('Koneksi Terputus / Diblokir Browser'); };
+  xhr.ontimeout = function() { callback('Waktu Habis (Server tidak merespons)'); };
+  xhr.send(bodyObj ? JSON.stringify(bodyObj) : null);
 }
 
 function doLogin() {
   var passVal = document.getElementById('pass').value;
   var btn = document.getElementById('loginBtn');
   var errDiv = document.getElementById('errorMsg');
-  
   errDiv.innerText = '';
   
-  fetchWithTimeout('/admin/ping', {
-    method: 'GET',
-    headers: { 'X-Admin-Token': passVal }
-  }, 5000)
-  .then(function(res) { return res.text(); })
-  .then(function(text) {
-    var d;
-    try { d = JSON.parse(text); } catch(e) { d = { error: 'Respons tidak valid (Mungkin Worker Error): ' + text }; }
-    
-    if(d && d.ok) { 
+  apiCall('GET', '/admin/ping', passVal, null, function(err, d) {
+    if(err) {
+      btn.innerText = 'Login';
+      btn.disabled = false;
+      errDiv.innerText = err;
+    } else if(d && d.ok) {
       try { localStorage.setItem('token', passVal); } catch(e) {}
-      window.location.reload(); 
+      window.location.reload();
     } else {
       btn.innerText = 'Login';
       btn.disabled = false;
-      errDiv.innerText = d.error || 'Password Salah!';
+      errDiv.innerText = 'Password Salah!';
     }
-  })
-  .catch(function(err) {
-    btn.innerText = 'Login';
-    btn.disabled = false;
-    errDiv.innerText = 'Koneksi Gagal: ' + err.message;
   });
 }
 
@@ -250,10 +261,8 @@ function logout() {
 }
 
 function loadKeys() {
-  fetchWithTimeout('/admin/keys', { headers: { 'X-Admin-Token': token } })
-  .then(function(res) { return res.json(); })
-  .then(function(d) {
-    if(d.error) { alert('Gagal load: ' + d.error); return; }
+  apiCall('GET', '/admin/keys', token, null, function(err, d) {
+    if(err) { alert(err); return; }
     if(!d.keys) return;
     
     var t = document.getElementById('keysTable');
@@ -278,14 +287,8 @@ function loadKeys() {
 function createKey() {
   var key = document.getElementById('newKey').value;
   var days = document.getElementById('newDays').value;
-  
-  fetchWithTimeout('/admin/keys', { 
-    method: 'POST', 
-    headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
-    body: JSON.stringify({ key: key, days: days }) 
-  })
-  .then(function(res) { return res.json(); })
-  .then(function(r) {
+  apiCall('POST', '/admin/keys', token, { key: key, days: days }, function(err, r) {
+    if(err) { alert(err); return; }
     if(r.ok) { alert('Key dibuat: ' + r.key); loadKeys(); }
     else { alert('Gagal membuat key: ' + (r.error || 'Terjadi kesalahan')); }
   });
@@ -293,11 +296,9 @@ function createKey() {
 
 function del(key) {
   if(confirm('Hapus key ' + key + '?')) { 
-    fetchWithTimeout('/admin/keys/delete', { 
-      method: 'POST', 
-      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token },
-      body: JSON.stringify({ key: key }) 
-    }).then(function() { loadKeys(); });
+    apiCall('POST', '/admin/keys/delete', token, { key: key }, function(err) {
+      if(!err) loadKeys();
+    });
   }
 }
 </script>
