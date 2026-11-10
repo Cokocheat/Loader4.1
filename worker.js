@@ -1,6 +1,6 @@
 // ============================================================
 // COMBATLOADER / BLACKBERRY AUTH WORKER
-// Cloudflare Workers + D1 Database (Versi GitHub - Fixed)
+// Cloudflare Workers + D1 Database (Fixed UI & Error Handling)
 // ============================================================
 
 export default {
@@ -20,19 +20,16 @@ export default {
     }
 
     try {
-      // 1. Tampilkan Panel Web
       if (path === '/' || path === '/panel') {
         return new Response(getPanelHTML(), {
           headers: { 'Content-Type': 'text/html; charset=utf-8' }
         });
       }
 
-      // 2. Endpoint API Login (Dipanggil oleh Lua)
       if (path === '/api.php' || path === '/login') {
         return await handleLogin(request, env, ip);
       }
 
-      // 3. Endpoint Admin Panel (Web)
       if (path.startsWith('/admin/')) {
         return await handleAdmin(request, env, path, cors);
       }
@@ -45,7 +42,7 @@ export default {
 };
 
 // ============================================================
-// LOGIN HANDLER (Lua Request)
+// LOGIN API (Lua)
 // ============================================================
 async function handleLogin(request, env, ip) {
   if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
@@ -64,37 +61,36 @@ async function handleLogin(request, env, ip) {
     return textResponse('invalid - bad hwid');
   }
 
-  // Lookup Key di Database
-  const keyRecord = await env.DB.prepare('SELECT * FROM keys WHERE key = ? LIMIT 1').bind(userKey).first();
+  try {
+    const keyRecord = await env.DB.prepare('SELECT * FROM keys WHERE key = ? LIMIT 1').bind(userKey).first();
 
-  if (!keyRecord) return textResponse('invalid - key not found');
-  if (!keyRecord.active) return textResponse('invalid - key disabled');
+    if (!keyRecord) return textResponse('invalid - key not found');
+    if (!keyRecord.active) return textResponse('invalid - key disabled');
 
-  const nowSec = Math.floor(Date.now() / 1000);
-  if (keyRecord.expires_at > 0 && nowSec > keyRecord.expires_at) {
-    return textResponse('expired - key has expired');
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (keyRecord.expires_at > 0 && nowSec > keyRecord.expires_at) {
+      return textResponse('expired - key has expired');
+    }
+
+    if (!keyRecord.hwid || keyRecord.hwid === '') {
+      await env.DB.prepare('UPDATE keys SET hwid = ?, last_login = ? WHERE id = ?')
+        .bind(hwid, nowSec, keyRecord.id).run();
+    } else if (keyRecord.hwid !== hwid) {
+      return textResponse('HWID mismatch - bound to another device');
+    } else {
+      await env.DB.prepare('UPDATE keys SET last_login = ? WHERE id = ?')
+        .bind(nowSec, keyRecord.id).run();
+    }
+
+    let daysLeft = 'unlimited';
+    if (keyRecord.expires_at > 0) {
+      daysLeft = Math.ceil((keyRecord.expires_at - nowSec) / 86400) + ' days';
+    }
+
+    return textResponse('SUCCESS\nKey verified OK\nDays remaining: ' + daysLeft + '\nWelcome to CombatLoader');
+  } catch (err) {
+    return textResponse('error - database error: ' + err.message);
   }
-
-  // Cek HWID
-  if (!keyRecord.hwid || keyRecord.hwid === '') {
-    await env.DB.prepare('UPDATE keys SET hwid = ?, last_login = ? WHERE id = ?')
-      .bind(hwid, nowSec, keyRecord.id).run();
-  } else if (keyRecord.hwid !== hwid) {
-    return textResponse('HWID mismatch - bound to another device');
-  } else {
-    await env.DB.prepare('UPDATE keys SET last_login = ? WHERE id = ?')
-      .bind(nowSec, keyRecord.id).run();
-  }
-
-  // Response untuk Lua (Harus ada kata SUCCESS)
-  let daysLeft = 'unlimited';
-  if (keyRecord.expires_at > 0) {
-    daysLeft = Math.ceil((keyRecord.expires_at - nowSec) / 86400) + ' days';
-  }
-
-  return textResponse(
-    'SUCCESS\nKey verified OK\nDays remaining: ' + daysLeft + '\nWelcome to CombatLoader'
-  );
 }
 
 function textResponse(text) {
@@ -102,23 +98,19 @@ function textResponse(text) {
 }
 
 // ============================================================
-// ADMIN HANDLERS (Web Panel)
+// ADMIN API
 // ============================================================
 async function handleAdmin(request, env, path, cors) {
+  if (!env.ADMIN_TOKEN) {
+    return jsonResponse({ error: 'ADMIN_TOKEN belum di-set di Cloudflare Settings!' }, 500, cors);
+  }
+
   const token = request.headers.get('X-Admin-Token');
-  if (token !== env.ADMIN_TOKEN) return jsonResponse({ error: 'Unauthorized' }, 401, cors);
+  if (token !== env.ADMIN_TOKEN) return jsonResponse({ error: 'Password salah!' }, 401, cors);
 
   try {
     if (path === '/admin/ping' && request.method === 'GET') {
       return jsonResponse({ ok: true }, 200, cors);
-    }
-
-    if (path === '/admin/stats' && request.method === 'GET') {
-      const now = Math.floor(Date.now() / 1000);
-      const total = await env.DB.prepare('SELECT COUNT(*) AS c FROM keys').first();
-      const active = await env.DB.prepare('SELECT COUNT(*) AS c FROM keys WHERE active = 1').first();
-      const online = await env.DB.prepare('SELECT COUNT(*) AS c FROM keys WHERE last_login > ?').bind(now - 3600).first();
-      return jsonResponse({ total: total?.c || 0, active: active?.c || 0, online: online?.c || 0 }, 200, cors);
     }
 
     if (path === '/admin/keys' && request.method === 'GET') {
@@ -148,22 +140,9 @@ async function handleAdmin(request, env, path, cors) {
       return jsonResponse({ ok: true }, 200, cors);
     }
 
-    if (path === '/admin/keys/reset-hwid' && request.method === 'POST') {
-      const body = await request.json();
-      await env.DB.prepare('UPDATE keys SET hwid = "" WHERE key = ?').bind(body.key).run();
-      return jsonResponse({ ok: true }, 200, cors);
-    }
-    
-    if (path === '/admin/keys/toggle' && request.method === 'POST') {
-      const body = await request.json();
-      const k = await env.DB.prepare('SELECT active FROM keys WHERE key = ?').bind(body.key).first();
-      if(k) await env.DB.prepare('UPDATE keys SET active = ? WHERE key = ?').bind(k.active ? 0 : 1, body.key).run();
-      return jsonResponse({ ok: true }, 200, cors);
-    }
-
-    return jsonResponse({ error: 'Not Found' }, 404, cors);
+    return jsonResponse({ error: 'Endpoint tidak ditemukan' }, 404, cors);
   } catch (e) {
-    return jsonResponse({ error: e.message }, 500, cors);
+    return jsonResponse({ error: 'Database Error: Pastikan tabel sudah dibuat. ' + e.message }, 500, cors);
   }
 }
 
@@ -172,7 +151,7 @@ function jsonResponse(obj, status, cors) {
 }
 
 // ============================================================
-// HTML PANEL (Diperbaiki: Tanpa Backtick di dalam Script)
+// UI PANEL (Ditambahkan penanganan error visual)
 // ============================================================
 function getPanelHTML() {
   return `<!DOCTYPE html>
@@ -183,21 +162,23 @@ function getPanelHTML() {
 <style>
   body { font-family: sans-serif; background: #0f172a; color: #e2e8f0; padding: 20px; }
   .card { background: #1e293b; padding: 20px; border-radius: 8px; max-width: 600px; margin: auto; margin-bottom: 20px; }
-  input, button { padding: 10px; margin: 5px 0; width: 100%; border-radius: 5px; border: none; }
-  button { background: #10b981; color: #fff; cursor: pointer; font-weight: bold; }
+  input, button { padding: 10px; margin: 5px 0; width: 100%; border-radius: 5px; border: none; box-sizing: border-box; }
+  button { background: #10b981; color: #fff; cursor: pointer; font-weight: bold; transition: 0.2s; }
   button:hover { background: #059669; }
   table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 14px; }
   th, td { padding: 10px; border-bottom: 1px solid #334155; text-align: left; }
   .badge { padding: 3px 8px; border-radius: 4px; font-size: 12px; }
   .active { background: #065f46; color: #34d399; }
   .inactive { background: #7f1d1d; color: #fca5a5; }
+  #errorMsg { color: #ef4444; font-size: 14px; margin-top: 10px; font-weight: bold; text-align: center; }
 </style>
 </head>
 <body>
 <div class="card" id="loginBox">
-  <h2>Admin Login</h2>
+  <h2 style="text-align:center">Admin Login</h2>
   <input type="password" id="pass" placeholder="Masukkan ADMIN_TOKEN">
-  <button onclick="login()">Login</button>
+  <button id="loginBtn" onclick="doLogin()">Login</button>
+  <div id="errorMsg"></div>
 </div>
 
 <div class="card" id="panelBox" style="display:none">
@@ -212,7 +193,9 @@ function getPanelHTML() {
 </div>
 
 <script>
-let token = localStorage.getItem('token') || '';
+var token = localStorage.getItem('token') || '';
+var errDiv = document.getElementById('errorMsg');
+
 if(token) {
   document.getElementById('loginBox').style.display = 'none';
   document.getElementById('panelBox').style.display = 'block';
@@ -222,31 +205,51 @@ if(token) {
 async function api(path, opts) {
   opts = opts || {};
   opts.headers = { 'Content-Type': 'application/json', 'X-Admin-Token': token };
-  const res = await fetch(path, opts);
-  return await res.json();
+  try {
+    var res = await fetch(path, opts);
+    var text = await res.text();
+    try { return JSON.parse(text); } catch (e) { return { error: text }; }
+  } catch(e) {
+    return { error: 'Gagal koneksi ke server: ' + e.message };
+  }
 }
 
-function login() {
+async function doLogin() {
   token = document.getElementById('pass').value;
-  api('/admin/ping').then(function(d) {
-    if(d.ok) { localStorage.setItem('token', token); location.reload(); }
-    else alert('Password Salah!');
-  });
+  var btn = document.getElementById('loginBtn');
+  
+  btn.innerText = 'Memeriksa...';
+  errDiv.innerText = '';
+  
+  var d = await api('/admin/ping');
+  
+  if(d && d.ok) { 
+    localStorage.setItem('token', token); 
+    window.location.reload(); 
+  } else {
+    btn.innerText = 'Login';
+    errDiv.innerText = d.error || 'Password Salah!';
+  }
 }
 
-function logout() { localStorage.removeItem('token'); location.reload(); }
+function logout() { localStorage.removeItem('token'); window.location.reload(); }
 
 async function loadKeys() {
-  const d = await api('/admin/keys');
+  var d = await api('/admin/keys');
+  if(d.error) {
+    alert('Gagal load: ' + d.error);
+    return;
+  }
   if(!d.keys) return;
-  const t = document.getElementById('keysTable');
+  
+  var t = document.getElementById('keysTable');
   t.innerHTML = '<tr><th>Key</th><th>Status</th><th>Expired</th><th>Aksi</th></tr>';
   
-  for(let i=0; i < d.keys.length; i++) {
-    let k = d.keys[i];
-    let exp = k.expires_at > 0 ? new Date(k.expires_at*1000).toISOString().split('T')[0] : 'Lifetime';
-    let badgeClass = k.active ? 'active' : 'inactive';
-    let badgeText = k.active ? 'Active' : 'Off';
+  for(var i=0; i < d.keys.length; i++) {
+    var k = d.keys[i];
+    var exp = k.expires_at > 0 ? new Date(k.expires_at*1000).toISOString().split('T')[0] : 'Lifetime';
+    var badgeClass = k.active ? 'active' : 'inactive';
+    var badgeText = k.active ? 'Active' : 'Off';
     
     t.innerHTML += '<tr>' +
       '<td><b>' + k.key + '</b></td>' +
@@ -258,10 +261,11 @@ async function loadKeys() {
 }
 
 async function createKey() {
-  const key = document.getElementById('newKey').value;
-  const days = document.getElementById('newDays').value;
-  const r = await api('/admin/keys', { method: 'POST', body: JSON.stringify({ key: key, days: days }) });
+  var key = document.getElementById('newKey').value;
+  var days = document.getElementById('newDays').value;
+  var r = await api('/admin/keys', { method: 'POST', body: JSON.stringify({ key: key, days: days }) });
   if(r.ok) { alert('Key dibuat: ' + r.key); loadKeys(); }
+  else { alert('Gagal membuat key: ' + (r.error || 'Terjadi kesalahan')); }
 }
 
 async function del(key) {
