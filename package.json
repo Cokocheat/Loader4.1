@@ -1,0 +1,9 @@
+{
+  "name": "combatloader-auth",
+  "version": "1.0.0",
+  "description": "Auth Panel",
+  "main": "worker.js",
+  "scripts": {
+    "deploy": "wrangler deploy"
+  }
+}

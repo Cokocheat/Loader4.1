@@ -1,0 +1,12 @@
+CREATE TABLE IF NOT EXISTS keys (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key TEXT UNIQUE NOT NULL,
+    hwid TEXT DEFAULT '',
+    expires_at INTEGER DEFAULT 0,
+    notes TEXT DEFAULT '',
+    active INTEGER DEFAULT 1,
+    created_at INTEGER NOT NULL,
+    last_login INTEGER DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_keys_key ON keys(key);
