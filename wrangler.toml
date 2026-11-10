@@ -1,8 +1,11 @@
-name = "combatloader-auth"  # GANTI dengan nama Worker kamu nanti di Cloudflare
+name = "loader4-1"
 main = "worker.js"
 compatibility_date = "2024-11-01"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "combatloader-db" # GANTI dengan nama database D1 kamu
-database_id = "5b8ca26a-5215-4df2-b9c0-3e149c69ef27" # GANTI dengan ID D1 kamu (bisa dilihat di dashboard D1)
+database_name = "shadowcheat-lua"
+database_id = "5b8ca26a-5215-4df2-b9c0-3e149c69ef27"
+
+[vars]
+ADMIN_TOKEN = "idahirpan6521"
